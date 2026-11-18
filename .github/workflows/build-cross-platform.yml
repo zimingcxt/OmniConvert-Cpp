@@ -8,21 +8,21 @@ on:
 
 jobs:
   build-macos:
-    name: macOS Universal/ARM64 Offline Bundle
-    runs-on: macos-14
+    name: macOS Offline Bundle (.app)
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Qt6 & Static FFmpeg
+      - name: Install Qt6 (6.8.3)
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.7.3'
+          version: '6.8.3'
           modules: 'qtimageformats qtpdf'
 
       - name: Download Static macOS FFmpeg
         run: |
           mkdir -p bin
-          curl -L https://evermeet.cx/ffmpeg/getrelease/zip -o ffmpeg.zip
+          curl -fSL https://evermeet.cx/ffmpeg/getrelease/zip -o ffmpeg.zip
           unzip -o ffmpeg.zip -d bin/
           chmod +x bin/ffmpeg
 
@@ -44,14 +44,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install ZLIB via vcpkg
-        run: |
-          vcpkg install zlib:x64-windows
-
-      - name: Install Qt6 (MSVC x64)
+      - name: Install Qt6 (6.8.3 MSVC x64)
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.7.3'
+          version: '6.8.3'
           arch: 'win64_msvc2022_64'
           modules: 'qtimageformats qtpdf'
 
@@ -64,18 +60,24 @@ jobs:
           $ff = Get-ChildItem -Path ffmpeg_tmp -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
           Copy-Item $ff.FullName "bin\ffmpeg.exe"
 
-      - name: Configure, Build & Package Windows Portable ZIP
+      - name: Configure, Build, Test & Package Windows Portable ZIP
         shell: pwsh
         run: |
-          cmake -S . -B build/win-release -DCMAKE_BUILD_TYPE=Release `
-                -DCMAKE_PREFIX_PATH="$env:Qt6_DIR" `
-                -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          cmake -S . -B build/win-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$env:Qt6_DIR"
           cmake --build build/win-release --config Release --parallel
+
+          $env:PATH = "$env:Qt6_DIR\bin;$env:PATH"
           ctest --test-dir build/win-release -C Release --output-on-failure
+
           New-Item -ItemType Directory -Force -Path dist/OmniConvert-Win64/bin | Out-Null
-          Copy-Item build/win-release/Release/OmniConvert.exe dist/OmniConvert-Win64/OmniConvert.exe
-          Copy-Item bin/ffmpeg.exe dist/OmniConvert-Win64/bin/ffmpeg.exe
-          & "$env:Qt6_DIR/bin/windeployqt.exe" --release --no-translations --compiler-runtime dist/OmniConvert-Win64/OmniConvert.exe
+          $ExePath = Join-Path "build/win-release" "Release/OmniConvert.exe"
+          if (-not (Test-Path $ExePath)) {
+            $ExePath = Join-Path "build/win-release" "OmniConvert.exe"
+          }
+          Copy-Item -Force $ExePath "dist/OmniConvert-Win64/OmniConvert.exe"
+          Copy-Item -Force "bin/ffmpeg.exe" "dist/OmniConvert-Win64/bin/ffmpeg.exe"
+
+          & "$env:Qt6_DIR/bin/windeployqt.exe" --release --no-translations --compiler-runtime "dist/OmniConvert-Win64/OmniConvert.exe"
           Compress-Archive -Path "dist/OmniConvert-Win64/*" -DestinationPath OmniConvert-Windows-x64-Offline.zip
 
       - name: Upload Windows Offline Artifact
