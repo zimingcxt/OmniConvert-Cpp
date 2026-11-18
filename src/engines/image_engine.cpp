@@ -3,21 +3,29 @@
 #include "omni/infra/portable_env.hpp"
 
 #include <QBuffer>
+#include <QColor>
 #include <QColorSpace>
 #include <QFile>
+#include <QFont>
 #include <QImageReader>
 #include <QImageWriter>
+#include <QMarginsF>
+#include <QPageLayout>
+#include <QPageSize>
 #include <QPainter>
+#include <QPdfWriter>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QTemporaryDir>
-#include <mutex>
+#include <QTransform>
 
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
+#include <mutex>
 #include <numeric>
 #include <stdexcept>
 #include <unordered_map>
@@ -105,7 +113,7 @@ bool encodeViaHeifEnc(const QImage& img, const std::filesystem::path& outPath, i
     if (lossless) {
         args << QStringLiteral("-L");
     } else {
-        args << QStringLiteral("-q") << QString::number(std::clamp(quality, 10, 100));
+        args << QStringLiteral("-q") << QString::number(std::clamp(quality, 1, 100));
     }
     args << srcPng << QStringLiteral("-o") << omni::core::pathToQString(outPath);
 
@@ -185,8 +193,7 @@ bool encodeViaFfmpeg(
     };
 
     if (fmtUpper == "AVIF") {
-        const int crf = lossless ? 0 : std::clamp(63 - (quality * 55 / 100), 8, 52);
-        // Try ultra-fast SVT-AV1 first, then fallback to libaom-av1 for universal FFmpeg build compatibility
+        const int crf = lossless ? 0 : std::clamp(63 - (quality * 55 / 100), 6, 56);
         if (runFfmpegWithCodec({QStringLiteral("-c:v"), QStringLiteral("libsvtav1"),
                                 QStringLiteral("-crf"), QString::number(crf),
                                 QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"),
@@ -207,7 +214,6 @@ bool encodeViaFfmpeg(
     return runFfmpegWithCodec({});
 }
 
-// Pure C++ Median-Cut RGBA/RGB Color Quantizer (TinyPNG / FastOctree equivalent)
 struct ColorBox {
     std::size_t begin = 0;
     std::size_t end = 0;
@@ -237,7 +243,6 @@ struct ColorBox {
     }
 };
 
-// Pure C++ Standard GIF89a LZW Encoder (supports arbitrary palette <= 256 colors + optional transparent index)
 void writeGif89a(const QImage& indexedImg, const std::filesystem::path& outPath) {
     QImage idxImg = indexedImg;
     if (idxImg.format() != QImage::Format_Indexed8) {
@@ -247,45 +252,33 @@ void writeGif89a(const QImage& indexedImg, const std::filesystem::path& outPath)
     const int width = idxImg.width();
     const int height = idxImg.height();
     QList<QRgb> table = idxImg.colorTable();
-    if (table.isEmpty()) {
-        table.append(qRgb(0, 0, 0));
-    }
+    if (table.isEmpty()) table.append(qRgb(0, 0, 0));
 
     int colorBits = 1;
-    while ((1 << colorBits) < table.size() && colorBits < 8) {
-        ++colorBits;
-    }
+    while ((1 << colorBits) < table.size() && colorBits < 8) ++colorBits;
     const int paletteSize = 1 << colorBits;
 
     int transparentIdx = -1;
     for (int i = 0; i < table.size(); ++i) {
-        if (qAlpha(table[i]) < 128) {
-            transparentIdx = i;
-            break;
-        }
+        if (qAlpha(table[i]) < 128) { transparentIdx = i; break; }
     }
 
     std::vector<std::uint8_t> out;
     out.reserve(static_cast<std::size_t>(width * height / 2 + 1024));
-
     auto put16 = [&](std::uint16_t v) {
         out.push_back(static_cast<std::uint8_t>(v & 0xFF));
         out.push_back(static_cast<std::uint8_t>((v >> 8) & 0xFF));
     };
 
-    // Header "GIF89a"
     const char hdr[6] = {'G', 'I', 'F', '8', '9', 'a'};
     out.insert(out.end(), hdr, hdr + 6);
-
-    // Logical Screen Descriptor
     put16(static_cast<std::uint16_t>(width));
     put16(static_cast<std::uint16_t>(height));
     const std::uint8_t gctFlag = static_cast<std::uint8_t>(0x80 | ((colorBits - 1) << 4) | (colorBits - 1));
     out.push_back(gctFlag);
-    out.push_back(0); // bg color
-    out.push_back(0); // aspect
+    out.push_back(0);
+    out.push_back(0);
 
-    // Global Color Table
     for (int i = 0; i < paletteSize; ++i) {
         const QRgb c = (i < table.size()) ? table[i] : qRgb(0, 0, 0);
         out.push_back(static_cast<std::uint8_t>(qRed(c)));
@@ -293,20 +286,16 @@ void writeGif89a(const QImage& indexedImg, const std::filesystem::path& outPath)
         out.push_back(static_cast<std::uint8_t>(qBlue(c)));
     }
 
-    // Graphics Control Extension (if transparency present)
     if (transparentIdx >= 0) {
         out.insert(out.end(), {0x21, 0xF9, 0x04, 0x05, 0x00, 0x00, static_cast<std::uint8_t>(transparentIdx), 0x00});
     }
 
-    // Image Descriptor
     out.push_back(0x2C);
-    put16(0);
-    put16(0);
+    put16(0); put16(0);
     put16(static_cast<std::uint16_t>(width));
     put16(static_cast<std::uint16_t>(height));
     out.push_back(0x00);
 
-    // LZW Minimum Code Size
     const int minCodeSize = std::max(2, colorBits);
     out.push_back(static_cast<std::uint8_t>(minCodeSize));
 
@@ -315,7 +304,6 @@ void writeGif89a(const QImage& indexedImg, const std::filesystem::path& outPath)
     int nextCode = eoiCode + 1;
     int codeSize = minCodeSize + 1;
 
-    // Hash table (prefix << 8 | suffix) -> code
     std::vector<int> dict(4096 * 256, -1);
     auto resetDict = [&]() {
         std::fill(dict.begin(), dict.end(), -1);
@@ -335,7 +323,6 @@ void writeGif89a(const QImage& indexedImg, const std::filesystem::path& outPath)
             subBlock.clear();
         }
     };
-
     auto emitCode = [&](int code) {
         bitBuf |= (static_cast<std::uint32_t>(code) << bitCount);
         bitCount += codeSize;
@@ -349,15 +336,11 @@ void writeGif89a(const QImage& indexedImg, const std::filesystem::path& outPath)
 
     emitCode(clearCode);
     int prefix = -1;
-
     for (int y = 0; y < height; ++y) {
         const std::uint8_t* scan = idxImg.constScanLine(y);
         for (int x = 0; x < width; ++x) {
             const int k = scan[x] & 0xFF;
-            if (prefix < 0) {
-                prefix = k;
-                continue;
-            }
+            if (prefix < 0) { prefix = k; continue; }
             const int key = (prefix << 8) | k;
             const int found = dict[static_cast<std::size_t>(key)];
             if (found >= 0) {
@@ -366,9 +349,7 @@ void writeGif89a(const QImage& indexedImg, const std::filesystem::path& outPath)
                 emitCode(prefix);
                 if (nextCode < 4096) {
                     dict[static_cast<std::size_t>(key)] = nextCode;
-                    if (nextCode == (1 << codeSize) && codeSize < 12) {
-                        ++codeSize;
-                    }
+                    if (nextCode == (1 << codeSize) && codeSize < 12) ++codeSize;
                     ++nextCode;
                 } else {
                     emitCode(clearCode);
@@ -379,20 +360,168 @@ void writeGif89a(const QImage& indexedImg, const std::filesystem::path& outPath)
         }
     }
 
-    if (prefix >= 0) {
-        emitCode(prefix);
-    }
+    if (prefix >= 0) emitCode(prefix);
     emitCode(eoiCode);
-    if (bitCount > 0) {
-        subBlock.push_back(static_cast<std::uint8_t>(bitBuf & 0xFF));
-    }
+    if (bitCount > 0) subBlock.push_back(static_cast<std::uint8_t>(bitBuf & 0xFF));
     flushSubBlock();
-    out.push_back(0x00); // Block terminator
-    out.push_back(0x3B); // GIF Trailer
+    out.push_back(0x00);
+    out.push_back(0x3B);
 
     QFile f(omni::core::pathToQString(outPath));
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         throw std::runtime_error("无法写入 GIF 文件");
+    }
+    f.write(reinterpret_cast<const char*>(out.data()), static_cast<qint64>(out.size()));
+    f.close();
+}
+
+void applyCornerWatermark(QImage& img, const std::string& wmTextUtf8) {
+    const QString text = QString::fromUtf8(wmTextUtf8.c_str()).trimmed();
+    if (text.isEmpty() || img.isNull()) return;
+
+    img = img.convertToFormat(QImage::Format_RGBA8888);
+    QPainter p(&img);
+    p.setRenderHints(QPainter::Antialiasing | QPainter::TextAntialiasing);
+
+    const int minSide = std::min(img.width(), img.height());
+    const int pxSize = std::clamp(minSide / 24, 12, 72);
+    QFont font(QStringLiteral("PingFang SC"));
+    font.setPixelSize(pxSize);
+    font.setBold(true);
+    p.setFont(font);
+
+    const QFontMetrics fm(font);
+    const QRect textRect = fm.boundingRect(text);
+    const int padX = std::max(10, pxSize / 2);
+    const int padY = std::max(6, pxSize / 3);
+    const int margin = std::max(12, minSide / 32);
+
+    const QRect pillRect(
+        img.width() - textRect.width() - padX * 2 - margin,
+        img.height() - textRect.height() - padY * 2 - margin,
+        textRect.width() + padX * 2,
+        textRect.height() + padY * 2);
+
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(15, 23, 42, 125));
+    p.drawRoundedRect(pillRect, padY, padY);
+
+    p.setPen(QColor(255, 255, 255, 230));
+    p.drawText(pillRect, Qt::AlignCenter, text);
+}
+
+void writeSingleImagePdf(const QImage& img, const std::filesystem::path& outPath) {
+    QPdfWriter writer(omni::core::pathToQString(outPath));
+    writer.setResolution(72);
+    const QSizeF ptSize(std::max(72.0, static_cast<double>(img.width())),
+                        std::max(72.0, static_cast<double>(img.height())));
+    writer.setPageSize(QPageSize(ptSize, QPageSize::Point));
+    writer.setPageMargins(QMarginsF(0, 0, 0, 0), QPageLayout::Point);
+    QPainter painter(&writer);
+    if (!painter.isActive()) {
+        throw std::runtime_error("初始化单图 PDF 写入器失败");
+    }
+    painter.drawImage(painter.viewport(), img);
+    painter.end();
+}
+
+void writeTruevisionTga(const QImage& src, const std::filesystem::path& outPath) {
+    const bool hasAlpha = src.hasAlphaChannel();
+    const QImage rgba = src.convertToFormat(QImage::Format_RGBA8888);
+    const int w = std::min(65535, rgba.width());
+    const int h = std::min(65535, rgba.height());
+    const int bpp = hasAlpha ? 4 : 3;
+
+    std::vector<std::uint8_t> tga;
+    tga.reserve(18u + static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * bpp + 26u);
+
+    std::uint8_t hdr[18] = {};
+    hdr[2] = 2; // Uncompressed True-Color
+    hdr[12] = static_cast<std::uint8_t>(w & 0xFF);
+    hdr[13] = static_cast<std::uint8_t>((w >> 8) & 0xFF);
+    hdr[14] = static_cast<std::uint8_t>(h & 0xFF);
+    hdr[15] = static_cast<std::uint8_t>((h >> 8) & 0xFF);
+    hdr[16] = static_cast<std::uint8_t>(bpp * 8);
+    hdr[17] = static_cast<std::uint8_t>(0x20 | (hasAlpha ? 8 : 0)); // bit 5 = top-to-bottom
+    tga.insert(tga.end(), hdr, hdr + 18);
+
+    for (int y = 0; y < h; ++y) {
+        const std::uint8_t* row = rgba.constScanLine(y);
+        for (int x = 0; x < w; ++x) {
+            tga.push_back(row[x * 4 + 2]); // B
+            tga.push_back(row[x * 4 + 1]); // G
+            tga.push_back(row[x * 4 + 0]); // R
+            if (hasAlpha) tga.push_back(row[x * 4 + 3]); // A
+        }
+    }
+
+    std::uint8_t footer[26] = {};
+    std::memcpy(footer + 8, "TRUEVISION-XFILE.", 17);
+    footer[25] = 0;
+    tga.insert(tga.end(), footer, footer + 26);
+
+    QFile f(omni::core::pathToQString(outPath));
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        throw std::runtime_error("无法写入 TGA 文件");
+    }
+    f.write(reinterpret_cast<const char*>(tga.data()), static_cast<qint64>(tga.size()));
+    f.close();
+}
+
+void writeAppleIcns(const QImage& src, const std::filesystem::path& outPath) {
+    const QImage base = src.convertToFormat(QImage::Format_RGBA8888);
+    struct IcnsSlot { const char tag[5]; int size; };
+    static const IcnsSlot slotsDef[] = {
+        {"icp4", 16}, {"icp5", 32}, {"icp6", 64}, {"ic07", 128}, {"ic08", 256}, {"ic09", 512}
+    };
+
+    struct Chunk { char tag[4]; QByteArray png; };
+    std::vector<Chunk> chunks;
+    const int maxDim = std::max(base.width(), base.height());
+    for (const auto& sl : slotsDef) {
+        if (sl.size > maxDim && sl.size > 128 && !chunks.empty()) continue;
+        QImage canvas(sl.size, sl.size, QImage::Format_RGBA8888);
+        canvas.fill(Qt::transparent);
+        const QImage scaled = base.scaled(sl.size, sl.size, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        QPainter p(&canvas);
+        p.drawImage((sl.size - scaled.width()) / 2, (sl.size - scaled.height()) / 2, scaled);
+        p.end();
+
+        QByteArray pngBytes;
+        QBuffer buf(&pngBytes);
+        buf.open(QIODevice::WriteOnly);
+        canvas.save(&buf, "PNG");
+        if (!pngBytes.isEmpty()) {
+            Chunk c{};
+            std::memcpy(c.tag, sl.tag, 4);
+            c.png = std::move(pngBytes);
+            chunks.push_back(std::move(c));
+        }
+    }
+
+    std::uint32_t totalLen = 8;
+    for (const auto& c : chunks) totalLen += static_cast<std::uint32_t>(8 + c.png.size());
+
+    std::vector<std::uint8_t> out;
+    out.reserve(totalLen);
+    auto putBe32 = [&](std::uint32_t v) {
+        out.push_back(static_cast<std::uint8_t>((v >> 24) & 0xFF));
+        out.push_back(static_cast<std::uint8_t>((v >> 16) & 0xFF));
+        out.push_back(static_cast<std::uint8_t>((v >> 8) & 0xFF));
+        out.push_back(static_cast<std::uint8_t>(v & 0xFF));
+    };
+
+    out.insert(out.end(), {'i', 'c', 'n', 's'});
+    putBe32(totalLen);
+    for (const auto& c : chunks) {
+        out.insert(out.end(), c.tag, c.tag + 4);
+        putBe32(static_cast<std::uint32_t>(8 + c.png.size()));
+        out.insert(out.end(), c.png.begin(), c.png.end());
+    }
+
+    QFile f(omni::core::pathToQString(outPath));
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        throw std::runtime_error("无法写入 ICNS 图标文件");
     }
     f.write(reinterpret_cast<const char*>(out.data()), static_cast<qint64>(out.size()));
     f.close();
@@ -416,13 +545,57 @@ bool ImageEngine::supportsHeic() {
     return resolveHeifEnc().has_value();
 }
 
+QImage ImageEngine::loadAnyImage(const std::filesystem::path& inPath) {
+    std::string inExt = omni::core::pathToUtf8(inPath.extension());
+    std::transform(inExt.begin(), inExt.end(), inExt.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+
+    QImage img;
+    bool loaded = false;
+
+#ifdef __APPLE__
+    if (inExt == ".heic" || inExt == ".heif" || inExt == ".avif") {
+        loaded = macos_imageio::readImageViaImageIO(inPath, img);
+    }
+#endif
+
+    if (!loaded) {
+        QImageReader reader(omni::core::pathToQString(inPath));
+        reader.setAutoTransform(true);
+        reader.setAllocationLimit(2048); // Support ultra-high-res 8K/16K assets up to 2GB
+        if (inExt == ".svg") {
+            const QSize defSz = reader.size();
+            if (defSz.isValid() && std::max(defSz.width(), defSz.height()) < 1024) {
+                reader.setScaledSize(defSz.scaled(1024, 1024, Qt::KeepAspectRatio));
+            }
+        }
+        img = reader.read();
+        loaded = !img.isNull();
+    }
+
+#ifdef __APPLE__
+    if (!loaded) {
+        loaded = macos_imageio::readImageViaImageIO(inPath, img);
+    }
+#endif
+
+    if (!loaded) {
+        loaded = decodeViaFfmpeg(inPath, img);
+    }
+
+    if (!loaded || img.isNull()) {
+        throw std::runtime_error("无法解码输入图片格式: " + inExt);
+    }
+    return img;
+}
+
 QImage ImageEngine::quantizeColors(const QImage& src, int maxColors, bool preserveAlpha) {
     maxColors = std::clamp(maxColors, 2, 256);
     QImage img = src.convertToFormat(preserveAlpha ? QImage::Format_ARGB32 : QImage::Format_RGB32);
     const int w = img.width();
     const int h = img.height();
 
-    // Build 5-6-5-4 quantized histogram for super fast median-cut even on 4K photos
     std::unordered_map<std::uint32_t, std::pair<QRgb, std::uint32_t>> bins;
     bins.reserve(16384);
 
@@ -450,9 +623,7 @@ QImage ImageEngine::quantizeColors(const QImage& src, int maxColors, bool preser
 
     std::vector<std::pair<QRgb, std::uint32_t>> hist;
     hist.reserve(bins.size());
-    for (const auto& kv : bins) {
-        hist.push_back(kv.second);
-    }
+    for (const auto& kv : bins) hist.push_back(kv.second);
 
     if (hist.empty()) {
         QImage empty(w, h, QImage::Format_Indexed8);
@@ -473,10 +644,7 @@ QImage ImageEngine::quantizeColors(const QImage& src, int maxColors, bool preser
         for (int i = 0; i < static_cast<int>(boxes.size()); ++i) {
             if (boxes[i].end - boxes[i].begin > 1) {
                 const int r = boxes[i].maxRange();
-                if (r > bestRange) {
-                    bestRange = r;
-                    bestIdx = i;
-                }
+                if (r > bestRange) { bestRange = r; bestIdx = i; }
             }
         }
         if (bestIdx < 0 || bestRange == 0) break;
@@ -504,10 +672,7 @@ QImage ImageEngine::quantizeColors(const QImage& src, int maxColors, bool preser
         std::size_t mid = box.begin + 1;
         for (std::size_t i = box.begin; i + 1 < box.end; ++i) {
             acc += hist[i].second;
-            if (acc * 2 >= totalWeight) {
-                mid = i + 1;
-                break;
-            }
+            if (acc * 2 >= totalWeight) { mid = i + 1; break; }
         }
 
         ColorBox left{box.begin, mid};
@@ -538,10 +703,8 @@ QImage ImageEngine::quantizeColors(const QImage& src, int maxColors, bool preser
                              preserveAlpha ? static_cast<int>(sa / sw) : 255));
     }
 
-    // Map pixels with Floyd-Steinberg light dither / nearest neighbor cache
     std::unordered_map<std::uint32_t, std::uint8_t> nearestCache;
     nearestCache.reserve(16384);
-
     auto findNearest = [&](QRgb px) -> std::uint8_t {
         const std::uint8_t a = preserveAlpha ? static_cast<std::uint8_t>(qAlpha(px)) : 255;
         const std::uint32_t key =
@@ -557,15 +720,9 @@ QImage ImageEngine::quantizeColors(const QImage& src, int maxColors, bool preser
         const int r = qRed(px), g = qGreen(px), b = qBlue(px);
         for (int i = 0; i < palette.size(); ++i) {
             const QRgb pc = palette[i];
-            const int dr = r - qRed(pc);
-            const int dg = g - qGreen(pc);
-            const int db = b - qBlue(pc);
-            const int da = a - qAlpha(pc);
+            const int dr = r - qRed(pc), dg = g - qGreen(pc), db = b - qBlue(pc), da = a - qAlpha(pc);
             const int dist = dr * dr * 2 + dg * dg * 4 + db * db + da * da * 4;
-            if (dist < bestDist) {
-                bestDist = dist;
-                best = i;
-            }
+            if (dist < bestDist) { bestDist = dist; best = i; }
         }
         const auto idx = static_cast<std::uint8_t>(best);
         nearestCache.emplace(key, idx);
@@ -577,9 +734,7 @@ QImage ImageEngine::quantizeColors(const QImage& src, int maxColors, bool preser
     for (int y = 0; y < h; ++y) {
         const QRgb* srcLine = reinterpret_cast<const QRgb*>(img.constScanLine(y));
         std::uint8_t* dstLine = indexed.scanLine(y);
-        for (int x = 0; x < w; ++x) {
-            dstLine[x] = findNearest(srcLine[x]);
-        }
+        for (int x = 0; x < w; ++x) dstLine[x] = findNearest(srcLine[x]);
     }
     return indexed;
 }
@@ -596,11 +751,7 @@ void ImageEngine::writeMultiSizeIco(const QImage& src, const std::filesystem::pa
     }
     if (sizes.empty()) sizes.push_back(32);
 
-    struct LayerData {
-        int w = 0;
-        int h = 0;
-        QByteArray pngBytes;
-    };
+    struct LayerData { int w = 0; int h = 0; QByteArray pngBytes; };
     std::vector<LayerData> layers;
     layers.reserve(sizes.size());
 
@@ -608,7 +759,6 @@ void ImageEngine::writeMultiSizeIco(const QImage& src, const std::filesystem::pa
         QImage scaled = (std::max(base.width(), base.height()) == s)
                             ? base
                             : base.scaled(s, s, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        // Pad into square canvas so Windows icons never stretch
         QImage canvas(s, s, QImage::Format_RGBA8888);
         canvas.fill(Qt::transparent);
         {
@@ -619,7 +769,7 @@ void ImageEngine::writeMultiSizeIco(const QImage& src, const std::filesystem::pa
         QBuffer buf(&bytes);
         buf.open(QIODevice::WriteOnly);
         QImageWriter writer(&buf, "png");
-        writer.setQuality(0); // zlib level 9
+        writer.setQuality(0);
         writer.write(canvas);
         layers.push_back(LayerData{s, s, std::move(bytes)});
     }
@@ -636,95 +786,83 @@ void ImageEngine::writeMultiSizeIco(const QImage& src, const std::filesystem::pa
         ico.push_back(static_cast<std::uint8_t>((v >> 24) & 0xFF));
     };
 
-    // ICONDIR (6 bytes)
-    put16(0);
-    put16(1); // Type 1 = ICO
-    put16(static_cast<std::uint16_t>(layers.size()));
-
+    put16(0); put16(1); put16(static_cast<std::uint16_t>(layers.size()));
     std::uint32_t offset = static_cast<std::uint32_t>(6 + layers.size() * 16);
     for (const auto& layer : layers) {
         ico.push_back(layer.w >= 256 ? 0 : static_cast<std::uint8_t>(layer.w));
         ico.push_back(layer.h >= 256 ? 0 : static_cast<std::uint8_t>(layer.h));
-        ico.push_back(0); // palette count
-        ico.push_back(0); // reserved
-        put16(1);         // color planes
-        put16(32);        // bits per pixel
+        ico.push_back(0); ico.push_back(0);
+        put16(1); put16(32);
         put32(static_cast<std::uint32_t>(layer.pngBytes.size()));
         put32(offset);
         offset += static_cast<std::uint32_t>(layer.pngBytes.size());
     }
-
-    for (const auto& layer : layers) {
-        ico.insert(ico.end(), layer.pngBytes.begin(), layer.pngBytes.end());
-    }
+    for (const auto& layer : layers) ico.insert(ico.end(), layer.pngBytes.begin(), layer.pngBytes.end());
 
     QFile f(omni::core::pathToQString(outPath));
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        throw std::runtime_error("无法写入 ICO 文件");
-    }
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) throw std::runtime_error("无法写入 ICO 文件");
     f.write(reinterpret_cast<const char*>(ico.data()), static_cast<qint64>(ico.size()));
     f.close();
 }
 
-void ImageEngine::convertImage(
+void ImageEngine::convertImageWithOptions(
     const std::filesystem::path& inPath,
     const std::filesystem::path& outPath,
-    const std::string& targetFormat,
-    omni::core::CompressionLevel compLevel,
-    int maxDim,
-    bool stripExif,
+    const omni::core::ConversionOptions& opts,
     const omni::core::ProgressCallback& progressCb,
     const omni::core::CancelCheckCallback& isCancelled) {
 
     if (isCancelled && isCancelled()) throw std::runtime_error("CANCELLED");
-    if (progressCb) progressCb(15);
+    if (progressCb) progressCb(12);
 
-    const std::string fmtUpper = toUpperAscii(targetFormat);
-    std::string inExt = omni::core::pathToUtf8(inPath.extension());
-    std::transform(inExt.begin(), inExt.end(), inExt.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
-    QImage img;
-    bool loaded = false;
-
-    // Prefer native Apple ImageIO first for HEIC/AVIF on macOS
-#ifdef __APPLE__
-    if (inExt == ".heic" || inExt == ".heif" || inExt == ".avif") {
-        loaded = macos_imageio::readImageViaImageIO(inPath, img);
-    }
-#endif
-
-    if (!loaded) {
-        QImageReader reader(omni::core::pathToQString(inPath));
-        reader.setAutoTransform(true); // Automatically rotate pixels per EXIF orientation
-        reader.setAllocationLimit(1024); // Allow large high-res photos up to 1GB uncompressed
-        img = reader.read();
-        loaded = !img.isNull();
-    }
-
-#ifdef __APPLE__
-    if (!loaded) {
-        loaded = macos_imageio::readImageViaImageIO(inPath, img);
-    }
-#endif
-
-    if (!loaded) {
-        loaded = decodeViaFfmpeg(inPath, img);
-    }
-
-    if (!loaded || img.isNull()) {
-        throw std::runtime_error("无法解码输入图片格式: " + inExt);
-    }
+    const std::string fmtUpper = toUpperAscii(opts.targetFormat);
+    QImage img = loadAnyImage(inPath);
 
     if (isCancelled && isCancelled()) throw std::runtime_error("CANCELLED");
-    if (progressCb) progressCb(38);
+    if (progressCb) progressCb(32);
 
-    // Resize if maxDim specified
-    if (maxDim > 0 && std::max(img.width(), img.height()) > maxDim) {
-        img = img.scaled(maxDim, maxDim, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    // 1. Geometric transforms: rotation & horizontal mirror
+    if (opts.imgRotateDeg != 0 || opts.imgFlipHorizontal) {
+        QTransform tf;
+        if (opts.imgFlipHorizontal) tf.scale(-1.0, 1.0);
+        if (opts.imgRotateDeg != 0) tf.rotate(opts.imgRotateDeg);
+        img = img.transformed(tf, Qt::SmoothTransformation);
     }
 
-    // Strip EXIF/text metadata if requested (pixel orientation is already baked in!)
-    if (stripExif) {
+    // 2. Resolution scaling: maxDim cap OR percentage scale
+    if (opts.imgMaxDim > 0 && std::max(img.width(), img.height()) > opts.imgMaxDim) {
+        img = img.scaled(opts.imgMaxDim, opts.imgMaxDim, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    } else if (opts.imgMaxDim == 0 && opts.imgScalePercent > 0 && opts.imgScalePercent != 100) {
+        const int nw = std::max(1, img.width() * opts.imgScalePercent / 100);
+        const int nh = std::max(1, img.height() * opts.imgScalePercent / 100);
+        img = img.scaled(nw, nh, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+
+    // 3. Grayscale conversion if requested
+    if (opts.imgGrayscale) {
+        const bool hadAlpha = img.hasAlphaChannel();
+        if (hadAlpha) {
+            QImage rgba = img.convertToFormat(QImage::Format_RGBA8888);
+            for (int y = 0; y < rgba.height(); ++y) {
+                std::uint8_t* p = rgba.scanLine(y);
+                for (int x = 0; x < rgba.width(); ++x, p += 4) {
+                    const auto g = static_cast<std::uint8_t>((p[0] * 77 + p[1] * 150 + p[2] * 29) >> 8);
+                    p[0] = p[1] = p[2] = g;
+                }
+            }
+            img = std::move(rgba);
+        } else {
+            img = img.convertToFormat(QImage::Format_Grayscale8).convertToFormat(QImage::Format_RGB888);
+        }
+    }
+
+    // 4. Optional corner watermark overlay
+    if (!opts.imgWatermarkText.empty()) {
+        applyCornerWatermark(img, opts.imgWatermarkText);
+    }
+
+    // 5. Strip EXIF/text metadata if requested
+    if (opts.imgStripExif) {
         QImage clean(img.size(), img.format());
         clean.setColorTable(img.colorTable());
         clean.setColorSpace(img.colorSpace());
@@ -735,13 +873,15 @@ void ImageEngine::convertImage(
     }
 
     int quality = 75;
-    switch (compLevel) {
+    switch (opts.compLevel) {
         case omni::core::CompressionLevel::Lossless: quality = 96; break;
         case omni::core::CompressionLevel::Light:    quality = 85; break;
         case omni::core::CompressionLevel::Balanced: quality = 72; break;
         case omni::core::CompressionLevel::Extreme:  quality = 50; break;
+        case omni::core::CompressionLevel::Custom:   quality = std::clamp(opts.imgCustomQuality, 1, 100); break;
     }
-    const bool isLossless = (compLevel == omni::core::CompressionLevel::Lossless);
+    const bool isLossless = (opts.compLevel == omni::core::CompressionLevel::Lossless) ||
+                            (opts.compLevel == omni::core::CompressionLevel::Custom && quality == 100);
 
     omni::infra::AtomicFileTx tx(outPath);
 
@@ -753,13 +893,22 @@ void ImageEngine::convertImage(
         return;
     }
 
-    // Composite alpha onto white background for formats without alpha channel
+    if (fmtUpper == "PDF") {
+        if (progressCb) progressCb(75);
+        writeSingleImagePdf(img, tx.tempPath());
+        tx.commit();
+        if (progressCb) progressCb(100);
+        return;
+    }
+
     const bool hasAlpha = img.hasAlphaChannel();
-    if (fmtUpper == "JPG" || fmtUpper == "JPEG" || fmtUpper == "BMP") {
+    if (fmtUpper == "JPG" || fmtUpper == "JPEG" || fmtUpper == "BMP" || fmtUpper == "PPM") {
         if (hasAlpha) {
+            QColor bgColor(QString::fromUtf8(opts.imgBgColor.c_str()));
+            if (!bgColor.isValid()) bgColor = Qt::white;
             QImage flat(img.size(), QImage::Format_RGB32);
             flat.setColorSpace(img.colorSpace());
-            flat.fill(Qt::white);
+            flat.fill(bgColor);
             {
                 QPainter painter(&flat);
                 painter.drawImage(0, 0, img);
@@ -771,7 +920,7 @@ void ImageEngine::convertImage(
     }
 
     if (isCancelled && isCancelled()) throw std::runtime_error("CANCELLED");
-    if (progressCb) progressCb(65);
+    if (progressCb) progressCb(68);
 
     if (fmtUpper == "JPG" || fmtUpper == "JPEG") {
         QImageWriter writer(omni::core::pathToQString(tx.tempPath()), "jpeg");
@@ -782,13 +931,17 @@ void ImageEngine::convertImage(
         }
     } else if (fmtUpper == "PNG") {
         QImage outImg = img;
-        if (compLevel == omni::core::CompressionLevel::Balanced ||
-            compLevel == omni::core::CompressionLevel::Extreme) {
-            const int colors = (compLevel == omni::core::CompressionLevel::Balanced) ? 256 : 128;
+        if (opts.compLevel == omni::core::CompressionLevel::Custom) {
+            if (opts.imgPngColors >= 2 && opts.imgPngColors <= 256 && !isLossless) {
+                outImg = quantizeColors(img, opts.imgPngColors, hasAlpha);
+            }
+        } else if (opts.compLevel == omni::core::CompressionLevel::Balanced ||
+                   opts.compLevel == omni::core::CompressionLevel::Extreme) {
+            const int colors = (opts.compLevel == omni::core::CompressionLevel::Balanced) ? 256 : 128;
             outImg = quantizeColors(img, colors, hasAlpha);
         }
         QImageWriter writer(omni::core::pathToQString(tx.tempPath()), "png");
-        writer.setQuality(0); // In Qt PNG handler, quality 0 = zlib compression level 9 (maximum)
+        writer.setQuality(0); // zlib level 9
         if (!writer.write(outImg)) {
             throw std::runtime_error("PNG 编码失败: " + writer.errorString().toStdString());
         }
@@ -821,9 +974,7 @@ void ImageEngine::convertImage(
         if (!ok) {
             ok = encodeViaFfmpeg(img, tx.tempPath(), "AVIF", avifQ, isLossless, &err);
         }
-        if (!ok) {
-            throw std::runtime_error("AVIF 编码失败: " + err);
-        }
+        if (!ok) throw std::runtime_error("AVIF 编码失败: " + err);
     } else if (fmtUpper == "HEIC" || fmtUpper == "HEIF") {
         bool ok = false;
         std::string err;
@@ -837,15 +988,11 @@ void ImageEngine::convertImage(
             ok = macos_imageio::writeImageViaImageIO(img, tx.tempPath(), "HEIC", quality, isLossless, &err);
         }
 #endif
-        if (!ok) {
-            ok = encodeViaHeifEnc(img, tx.tempPath(), quality, isLossless, &err);
-        }
-        if (!ok) {
-            throw std::runtime_error("当前环境不支持编码导出 HEIC: " + err);
-        }
+        if (!ok) ok = encodeViaHeifEnc(img, tx.tempPath(), quality, isLossless, &err);
+        if (!ok) throw std::runtime_error("当前环境不支持编码导出 HEIC: " + err);
     } else if (fmtUpper == "TIFF" || fmtUpper == "TIF") {
         QImageWriter writer(omni::core::pathToQString(tx.tempPath()), "tiff");
-        writer.setCompression(1); // LZW compression
+        writer.setCompression(1);
         if (!writer.write(img)) {
 #ifdef __APPLE__
             std::string err;
@@ -857,16 +1004,25 @@ void ImageEngine::convertImage(
 #endif
         }
     } else if (fmtUpper == "GIF") {
-        const int colors = (compLevel == omni::core::CompressionLevel::Lossless ||
-                            compLevel == omni::core::CompressionLevel::Light)
-                               ? 256
-                               : (compLevel == omni::core::CompressionLevel::Balanced ? 128 : 64);
+        int colors = 128;
+        if (opts.compLevel == omni::core::CompressionLevel::Custom) {
+            colors = std::clamp(opts.imgPngColors, 2, 256);
+        } else if (opts.compLevel == omni::core::CompressionLevel::Lossless ||
+                   opts.compLevel == omni::core::CompressionLevel::Light) {
+            colors = 256;
+        } else if (opts.compLevel == omni::core::CompressionLevel::Extreme) {
+            colors = 64;
+        }
         QImage qImg = quantizeColors(img, colors, hasAlpha);
         writeGif89a(qImg, tx.tempPath());
-    } else if (fmtUpper == "BMP") {
-        QImageWriter writer(omni::core::pathToQString(tx.tempPath()), "bmp");
+    } else if (fmtUpper == "TGA") {
+        writeTruevisionTga(img, tx.tempPath());
+    } else if (fmtUpper == "ICNS") {
+        writeAppleIcns(img, tx.tempPath());
+    } else if (fmtUpper == "BMP" || fmtUpper == "PPM") {
+        QImageWriter writer(omni::core::pathToQString(tx.tempPath()), fmtUpper.c_str());
         if (!writer.write(img)) {
-            throw std::runtime_error("BMP 编码失败: " + writer.errorString().toStdString());
+            throw std::runtime_error(fmtUpper + " 编码失败: " + writer.errorString().toStdString());
         }
     } else {
         QImageWriter writer(omni::core::pathToQString(tx.tempPath()), fmtUpper.c_str());
@@ -877,6 +1033,24 @@ void ImageEngine::convertImage(
 
     tx.commit();
     if (progressCb) progressCb(100);
+}
+
+void ImageEngine::convertImage(
+    const std::filesystem::path& inPath,
+    const std::filesystem::path& outPath,
+    const std::string& targetFormat,
+    omni::core::CompressionLevel compLevel,
+    int maxDim,
+    bool stripExif,
+    const omni::core::ProgressCallback& progressCb,
+    const omni::core::CancelCheckCallback& isCancelled) {
+
+    omni::core::ConversionOptions opts;
+    opts.targetFormat = targetFormat;
+    opts.compLevel = compLevel;
+    opts.imgMaxDim = maxDim;
+    opts.imgStripExif = stripExif;
+    convertImageWithOptions(inPath, outPath, opts, progressCb, isCancelled);
 }
 
 } // namespace omni::engines

@@ -13,6 +13,16 @@ public:
     static bool supportsAvif();
     static bool supportsHeic();
 
+    // Shared multi-backend image decoder (Qt6 plugins + macOS ImageIO + FFmpeg fallback, auto EXIF-rotated)
+    static QImage loadAnyImage(const std::filesystem::path& inPath);
+
+    static void convertImageWithOptions(
+        const std::filesystem::path& inPath,
+        const std::filesystem::path& outPath,
+        const omni::core::ConversionOptions& opts,
+        const omni::core::ProgressCallback& progressCb,
+        const omni::core::CancelCheckCallback& isCancelled);
+
     static void convertImage(
         const std::filesystem::path& inPath,
         const std::filesystem::path& outPath,
@@ -23,10 +33,7 @@ public:
         const omni::core::ProgressCallback& progressCb,
         const omni::core::CancelCheckCallback& isCancelled);
 
-    // Quantize image to <= maxColors palette (used for PNG TinyPNG-style compression & GIF)
     static QImage quantizeColors(const QImage& src, int maxColors, bool preserveAlpha);
-
-    // Multi-resolution Windows/macOS .ico builder (256, 128, 64, 48, 32, 16)
     static void writeMultiSizeIco(const QImage& src, const std::filesystem::path& outPath);
 };
 

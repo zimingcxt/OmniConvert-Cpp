@@ -1,102 +1,100 @@
 <div align="center">
 
-<img src="resources/app_icon.png" width="112" height="112" alt="OmniConvert Logo" />
+<img src="resources/app_icon.png" alt="OmniConvert Logo" width="112" height="112" />
 
-# OmniConvert 万能格式工坊
+# OmniConvert Pro 万能格式工坊 (v3.0)
 
-**基于 C++20 与 Qt6 构建的跨平台、全离线、零依赖便携式多媒体与电子书转换压缩工具**
+**基于 C++20 与 Qt6 构建的高自由度、纯本地离线全能格式转换与生活效率桌面工具**
+
+支持 **macOS (Apple Silicon / Intel)** 与 **Windows 10 / 11 (x64)** · 零云端上传 · 开箱即用
 
 </div>
 
-## ✨ 项目简介
+## ✨ 核心特性与设计理念
 
-**OmniConvert** 是一款专为桌面端打造的**全离线、绿色便携万能格式转换与多级压缩工坊**。本项目采用现代 **C++20** 与 **Qt6** 对原版 Python 工具（归档于 `legacy/omni_converter.py`）进行了彻底重写，摆脱了 Python 解释器与第三方运行库依赖：
+- **🔒 100% 本地离线与隐私安全**：身份证加水印、合同扫描件转 PDF、私人照片与电子书排版全程在本机离线完成，绝不上传任何第三方服务器。
+- **🎛️ 新手省心预设 + 极客像素级自由度**：既提供 `无损原画 / 轻度压缩 / 均衡推荐 / 极限瘦身` 四档一键预设，也提供 **`自定义精细参数`** 模式，允许精确到 `1%` 画质、`1 kbps` 码率、`1 CRF` 因子、字号与行距微调。
+- **📚 为小说与深度阅读爱好者量身定制**：内置本地图片自定义封面、程序化典雅书封自动绘制（含书名与作者印章排版）、离线简繁互转、盗版网文广告行自动净化，以及 EPUB / PDF / MOBI / 单文件护眼阅读器全链路书封直嵌。
+- **🧰 解决高频生活痛点的效率百宝箱**：内置公务员/教资报名照 **精确卡 KB 二分压缩**、证件复印件 **全屏防盗斜向安全水印**、**Excel 中文防乱码表格互转**、**字幕时间轴校准与台词文稿提取** 以及大文件 **SHA-256 校验清单**。
 
-- **100% 本地离线处理**：所有图片、音视频与电子书文档均在本地完成编解码与重排版，无需联网，保护文件与隐私安全。
-- **开箱即用 · 绿色便携**：发行版已内置 Qt6 核心动态库、图像插件及静态 `FFmpeg` 内核；优先在程序同级目录读写 `omni_settings.json`（只读目录自动回退至 `~/.omniconvert/`），拷入 U 盘或移动硬盘即可随插随用。
-- **人性化交互体验**：支持文件/文件夹全局拖拽、**跨模块文件拖入智能识别自动切换分类**、深色/浅色双主题切换、四档直观压缩预设（无损 / 轻度 / 均衡 / 极限）、实时体积节省比计算及双击直接定位输出文件。
-- **工业级防丢数保障**：内置 `DualPoolScheduler` 自适应双池并发调度器与 `AtomicFileTx` 原子文件写入事务，任何中途取消或异常均自动回滚清理临时文件，绝不污染或覆盖源文件。
+## 🧩 六大核心功能模块一览
 
-## 🎯 核心功能与支持格式
+| 模块 | 输入与输出支持 | 精细控制与特色能力 |
+| :--- | :--- | :--- |
+| **🖼️ 图片转换与精修** | **15+ 种格式**：`WEBP` `JPG` `PNG` `AVIF` `HEIC` `SVG` `ICO` `ICNS` `BMP` `TIFF` `GIF` `TGA` `PPM` `PDF` | `1~100` 自由画质、`2~256` 色调色板量化、按百分比缩放或自定义最大像素边长、`90°/180°/270°` 旋转、水平镜像、黑白文档去色、自定义透明填充底色、右下角署名水印、抹除 EXIF 隐私 |
+| **🎵 音频提取与裁剪** | **10 种音频输出**：`MP3` `M4A` `AAC` `FLAC` `WAV` `OGG` `OPUS` `AIFF` `AC3` `WMA`（支持直接拖入视频抽离音轨） | `16~512 kbps` 自定义码率、`8kHz ~ 96kHz` 采样率（含 `16000 Hz` AI 语音识别专用档）、单声道/立体声切换、`0.5x ~ 2.0x` 变速不变调、起止时间铃声裁剪、`EBU R128` 智能响度均衡 |
+| **🎬 视频转码与瘦身** | **10 种视频与动图**：`MP4` `MKV` `MOV` `WEBM` `GIF` `APNG` `AVI` `FLV` `TS` `WMV` | `CRF 0~51` 恒定画质控码、`H.264 / H.265 (HEVC)` 编码切换、`5~120 FPS` 帧率控制、自定义像素宽度、起止时间片段无损/重编码截取、一键静音剔除音轨、双遍调色板高清 `GIF` 动图 |
+| **📚 小说电子书工坊** | **8 种双向互转**：`TXT` `EPUB` `PDF` `MOBI` `AZW3` `DOCX` `HTML` `MD` `FB2` | **自定义本地图片封面** 或 **一键自动绘制典雅古风/现代书封**（直嵌 EPUB 书架、PDF 扉页、MOBI 封面记录与网页阅读器）、**离线繁简互转**、自动清洗网文网址与求票广告、自定义书名/作者/分章正则、`9~22pt` 字号与行距微调、`GB18030/UTF-8` 智能防乱码 |
+| **📄 PDF 与表格工坊** | **PDF 套件**：多图合 PDF、多 PDF 合并、PDF 拆高清图<br>**数据表格**：`CSV` `TSV` `JSON` `Markdown` `HTML` | 支持上下调整扫描件页序、贴合原图无白边或 `A4/B5` 标准页、矢量级无损合并 PDF、`96/150/300 DPI` 导图；表格转换自动修复 `GBK` 乱码并写入 `UTF-8 BOM` 彻底解决 Excel 中文乱码，支持生成带实时搜索框的 HTML 报表 |
+| **🧰 生活效率百宝箱** | **四大高频实用工具** | **① 证件照精确卡 KB**：二分搜索画质+阶梯微调尺寸，严格 `≤ 20KB/50KB/100KB`<br>**② 身份证防盗水印**：离线铺满明暗双色抗涂抹斜向水印<br>**③ 字幕互转与校准**：`SRT/VTT/ASS` 毫秒级时间轴平移与 `.txt` 纯台词提取<br>**④ 哈希校验清单**：流式计算大文件 `SHA-256` 与 `MD5` 并导出 Excel 清单 |
 
-| 工坊模块 | 支持输入格式 | 支持输出格式 | 核心技术亮点 |
-| :--- | :--- | :--- | :--- |
-| **🖼️ 图片压缩与转换** | `JPG` `JPEG` `PNG` `WEBP` `AVIF` `HEIC` `HEIF` `BMP` `TIFF` `TIF` `GIF` `ICO` | `WEBP` `JPG` `PNG` `AVIF` `HEIC` `ICO` `BMP` `TIFF` `GIF` | • **纯 C++ 中位切分色彩量化器**：PNG 均衡(256色)/极限(128色)智能减色，复现 TinyPNG 级瘦身<br>• **多尺寸图层 `.ico` 引擎**：自动合成 256/128/64/48/32/16px 标准图标<br>• **EXIF 方向与隐私**：自动旋转手机照片方向，支持一键剥离拍摄参数与 GPS 位置 |
-| **🎵 音频转换与提音** | **音频**：`MP3` `WAV` `FLAC` `AAC` `M4A` `OGG` `OPUS` `WMA` `AIFF` `APE` `AMR`<br>**视频提音**：支持直接拖入任意视频提取音轨 | `MP3` `M4A` `FLAC` `WAV` `OGG` `OPUS` | • **视频一键转音频**：直接拖入 `MP4/MKV/MOV` 等视频即可高速抽取纯净音频<br>• **智能响度均衡**：支持开启 EBU R128 (`loudnorm`) 标准响度归一化，统一播客/录音音量<br>• **多级码率与重采样**：支持 48kHz / 44.1kHz / 24kHz 采样率自由切换 |
-| **🎬 视频压缩与动图** | `MP4` `MKV` `MOV` `AVI` `WEBM` `FLV` `WMV` `M4V` `TS` `MTS` `MPG` `MPEG` `3GP` | `MP4` `MKV` `MOV` `WEBM` `GIF` `AVI` | • **双编码器支持**：支持 `H.264`（全设备高兼容）与 `H.265 / HEVC`（`hvc1` 标签，Apple 原生可播）<br>• **高画质调色盘 GIF**：采用 `palettegen + paletteuse` 双通道滤镜生成细腻动图<br>• **Retina 录屏防错**：自动对齐偶数像素宽高，支持一键剥离音轨导出静音视频 |
-| **📚 小说电子书互转** | `TXT` `EPUB` `MOBI` `AZW` `AZW3` `PDF` `DOCX` `FB2` `MD` `HTML` `HTM` | `EPUB` `TXT` `MOBI` `PDF` `HTML` `DOCX` `MD` `FB2` | • **乱码终结者**：智能识别 `GB18030 / GBK / Big5 / UTF-16 / UTF-8` 编码，老旧 TXT 小说零乱码<br>• **智能分章引擎**：正则识别中英文卷章标题；无目录超长小说按每 160 段平滑切节防卡死<br>• **纯 C++ 零依赖生成**：内置 `EPUB 3`、`OpenXML DOCX`、`PalmDOC/MOBI6`（4096 字节 UTF-8 边界安全编码）、`PDF`（A4 / B5 / 6寸电纸书版式）及**带侧边目录/羊皮纸护眼/夜间模式/字号调节的单文件 HTML 阅读器** |
+## 📦 下载与安装指南
 
-## 📦 下载与安装
+前往本仓库右侧的 **Releases** 页面，下载对应操作系统的最新离线便携压缩包：
 
-请前往仓库右侧的 **Releases** 页面下载对应操作系统的免安装离线包：
-
-### 🍎 macOS (Apple Silicon / M系列芯片)
-1. 下载 **`OmniConvert-macOS-Offline.zip`** 并解压。
-2. 双击 **`OmniConvert.app`** 即可直接运行（也可拖入 `/Applications` 应用程序文件夹）。
-3. **首次打开提示说明**：若 macOS 弹出“无法验证开发者”提示，可在终端执行以下命令解除隔离属性，或在“系统设置 → 隐私与安全性”中点击“仍要打开”：
+### 🍎 macOS 用户 (`OmniConvert-macOS-Offline.zip`)
+1. 解压后得到独立的 **`OmniConvert.app`**（已内置 Qt6 图形框架与独立静态 `ffmpeg`，无需安装 Homebrew 或任何依赖）。
+2. 将 `OmniConvert.app` 拖入「应用程序 (`/Applications`)」即可双击运行。
+3. 若首次打开提示「无法验证开发者」，在终端执行以下命令即可解除隔离标记：
    ```bash
-   xattr -cr /path/to/OmniConvert.app
+   xattr -cr /Applications/OmniConvert.app
    ```
 
-### 🪟 Windows (Windows 10 / 11 x64)
-1. 下载 **`OmniConvert-Windows-x64-Offline.zip`** 并解压到任意文件夹（含 U 盘）。
-2. 双击目录内的 **`OmniConvert.exe`** 即可直接运行（无需安装 Python、Qt 或配置系统环境变量，静态 `ffmpeg.exe` 已内置于 `./bin/` 目录）。
+### 🪟 Windows 用户 (`OmniConvert-Windows-x64-Offline.zip`)
+1. 解压压缩包到任意文件夹（纯绿色便携版，无需安装程序，不写注册表）。
+2. 双击文件夹内的 **`OmniConvert.exe`** 即可直接使用全部六大模块。
 
-## 🗂️ 仓库目录结构
-
-```text
-OmniConvert-Cpp/
-├── CMakeLists.txt                  # 跨平台 CMake 构建主配置 (macOS / Windows / Linux)
-├── CMakePresets.json               # macOS 与 Windows MSVC 预设配置
-├── vcpkg.json                      # Windows 可选 vcpkg 依赖清单
-├── include/omni/                   # 头文件目录
-│   ├── core/                       # 核心类型、DualPoolScheduler 双池调度器、Qt 信号槽桥接
-│   ├── infra/                      # 便携环境探测、AtomicFileTx 原子文件事务、ZIP 归档、智能编码转换
-│   ├── engines/                    # 图片、音视频 (FFmpeg)、小说电子书三大核心引擎接口
-│   └── ui/                         # 深浅双主题样式表、拖拽区控件、主窗口头文件
-├── src/                            # C++20 / Objective-C++ 核心源码实现
-├── resources/                      # 应用图标 (.png / .icns / .ico)、Qt 资源 (.qrc)、Info.plist 与 Windows .rc
-├── scripts/
-│   ├── build_macos.sh              # macOS 一键编译、CTest 测试、macdeployqt 打包与签名脚本
-│   └── build_windows.ps1           # Windows 一键编译、windeployqt 收集与绿色便携包生成脚本
-├── tests/
-│   └── test_m1_core.cpp            # 端到端自动化单元测试套件 (ZIP/编码/图片/小说回读/音视频/并发调度)
-└── legacy/
-    └── omni_converter.py           # 原版 Python (PySide6) 参考实现归档
-```
-
-## 🛠️ 从源码构建
+## 🛠️ 本地从源码编译与打包
 
 ### 环境要求
-- **C++ 编译器**：支持 C++20（macOS Xcode Clang 15+ / Windows MSVC 2022 / Linux GCC 11+）
-- **CMake**：3.21 及以上
-- **Qt 6 SDK**：Qt 6.5 ~ 6.8（包含 `Core`、`Gui`、`Widgets` 及 `Qt Image Formats` 插件）
-- **FFmpeg**（可选，用于音视频转换）：将静态编译的 `ffmpeg`（或 `ffmpeg.exe`）放入项目根目录 `./bin/` 下，构建脚本会自动将其打包进最终产物。
+- C++20 编译器（macOS Xcode Clang 15+ / Windows MSVC 2022）
+- CMake 3.21+
+- Qt 6.5+（`Core`, `Gui`, `Widgets` 及 `qtimageformats` 插件）
+- 可选：`bin/ffmpeg`（或 `bin/ffmpeg.exe`）用于音视频转码模块
 
-### 1. macOS 编译与 `.app` 独立封包
+### macOS 一键编译、自测与独立封包
 ```bash
 chmod +x scripts/build_macos.sh
 ./scripts/build_macos.sh /path/to/Qt/6.8.3/macos
 ```
-脚本会自动完成 Release 编译、运行 `ctest` 全套单元测试、调用 `macdeployqt` 嵌入框架与图像插件、内置 `./bin/ffmpeg` 并完成 Ad-hoc 签名，最终在根目录产出独立的 **`OmniConvert.app`**。
+脚本将自动完成 Release 编译、运行 40+ 项核心自动化单元测试（`ctest`）、调用 `macdeployqt` 注入独立框架、打包 `bin/ffmpeg` 并完成应用签名。
 
-### 2. Windows (x64 MSVC) 编译与绿色便携包制作
-在安装了 Visual Studio 2022 与 Qt 6 的 PowerShell 中执行：
+### Windows (PowerShell + MSVC) 编译与测试
 ```powershell
-.\scripts\build_windows.ps1 -QtPrefix "C:\Qt\6.8.3\msvc2022_64"
-```
-构建完成后，将在 `dist\OmniConvert-Win64-Portable` 目录及 `dist\OmniConvert-Win64-Portable.zip` 生成包含全部依赖 DLL 的绿色免安装包。
-
-### 3. 运行自动化测试套件
-```bash
-ctest --test-dir build/macos-release --output-on-failure
+cmake -S . -B build/win-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="C:/Qt/6.8.3/msvc2022_64"
+cmake --build build/win-release --config Release --parallel
+ctest --test-dir build/win-release -C Release --output-on-failure
 ```
 
-## ☁️ GitHub Actions 云端自动构建与发版
+## 🤖 GitHub Actions 云端双平台自动构建与发版
 
-本仓库已内置双平台 CI/CD 流水线（`.github/workflows/build-cross-platform.yml`）：
+仓库已内置跨平台 CI/CD 工作流（详见 `.github/workflows/build-cross-platform.yml`）：
+- **日常推送 (`git push`)**：每次推送到 `main` 分支都会自动在云端编译 macOS 与 Windows 版本并执行全套自动化测试。
+- **发布正式版到 Releases**：
+  - **方式一（网页手动触发）**：进入仓库顶部 **Actions** ➔ 选择左侧 **Build Cross-Platform Offline Releases** ➔ 点击右侧 **Run workflow** ➔ 输入版本号（例如 `v3.0.0`）即可自动打包并上架到 **Releases**。
+  - **方式二（Git 标签触发）**：
+    ```bash
+    git tag v3.0.0
+    git push origin v3.0.0
+    ```
 
-- **日常构建**：每次向 `main` 分支推送代码时，自动在云端编译并测试 macOS 与 Windows 双端离线包，产物可在 Actions 页面 **Artifacts** 中下载。
-- **一键发布 Release**：
-  - **方式一（标签触发）**：在终端执行 `git tag v2.0.0 && git push origin v2.0.0`，流水线将在双端构建通过后自动创建 GitHub Release 并挂载双端 `.zip` 离线包。
-  - **方式二（网页手动触发）**：进入仓库 **Actions** 页面 → 选择 **Build Cross-Platform Offline Releases** → 点击 **Run workflow** 并填写版本号（如 `v2.0.0`），即可全自动完成打包与 Release 发布。
+## 📂 项目架构目录
+
+```text
+OmniConvert-Cpp/
+├── CMakeLists.txt                  # 跨平台 CMake 构建配置 (macOS & Windows MSVC)
+├── include/omni/
+│   ├── core/                       # 核心类型、精细参数结构体与双池并发调度器
+│   ├── infra/                      # 原子文件事务、智能编码识别、原生 ZIP 引擎、便携环境
+│   ├── engines/                    # 图像 / 音视频 / 小说电子书 / 文档表格 / 生活百宝箱 六大引擎
+│   └── ui/                         # Qt6 深浅双色主题样式与高自由度主窗口
+├── src/                            # 核心实现源码与 macOS ImageIO / PDFKit 原生硬件加速层
+├── resources/                      # 应用图标 (.icns / .ico / .png) 与平台清单
+├── scripts/                        # 本地一键构建与独立 .app 封包脚本
+├── tests/                          # 全模块端到端无头自动化测试套件
+└── .github/workflows/              # GitHub Actions 双平台自动编译与 Release 发布流水线
+```
+
+## 📄 开源许可
+
+本项目基于 MIT License 开源，欢迎自由使用、反馈 Issue 或提交 Pull Request。

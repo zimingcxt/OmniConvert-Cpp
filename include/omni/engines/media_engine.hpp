@@ -14,6 +14,14 @@ public:
         const std::vector<std::string>& args,
         const std::filesystem::path& outPath,
         const omni::core::ProgressCallback& progressCb,
+        const omni::core::CancelCheckCallback& isCancelled,
+        double expectedDurationSec = 0.0);
+
+    static void convertAudioWithOptions(
+        const std::filesystem::path& inPath,
+        const std::filesystem::path& outPath,
+        const omni::core::ConversionOptions& opts,
+        const omni::core::ProgressCallback& progressCb,
         const omni::core::CancelCheckCallback& isCancelled);
 
     static void convertAudio(
@@ -23,6 +31,13 @@ public:
         omni::core::CompressionLevel compLevel,
         int sampleRate,
         bool loudnorm,
+        const omni::core::ProgressCallback& progressCb,
+        const omni::core::CancelCheckCallback& isCancelled);
+
+    static void convertVideoWithOptions(
+        const std::filesystem::path& inPath,
+        const std::filesystem::path& outPath,
+        const omni::core::ConversionOptions& opts,
         const omni::core::ProgressCallback& progressCb,
         const omni::core::CancelCheckCallback& isCancelled);
 

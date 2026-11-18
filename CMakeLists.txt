@@ -5,7 +5,7 @@ if(APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
 endif()
 
 # Enable both C and CXX so FetchContent(zlib) works on Windows MSVC / Ninja / Linux
-project(OmniConvert VERSION 2.0.0 LANGUAGES C CXX)
+project(OmniConvert VERSION 3.0.0 LANGUAGES C CXX)
 
 if(APPLE)
     enable_language(OBJCXX)
@@ -58,6 +58,8 @@ set(OMNI_CORE_SOURCES
     src/engines/image_engine.cpp
     src/engines/media_engine.cpp
     src/engines/novel_engine.cpp
+    src/engines/document_engine.cpp
+    src/engines/toolbox_engine.cpp
     include/omni/core/qt_scheduler_bridge.hpp
 )
 

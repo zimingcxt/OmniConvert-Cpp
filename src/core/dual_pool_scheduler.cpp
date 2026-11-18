@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <mutex>
 #include <system_error>
 #include <thread>
@@ -24,9 +25,63 @@ void DualPoolScheduler::executeBatch(
         return;
     }
 
-    // Determine concurrency:
-    // - Image & Novel tasks are in-process CPU/IO tasks -> scale up to 4 threads
-    // - Audio & Video spawn multi-threaded FFmpeg subprocesses -> cap at 2 concurrent processes
+    // Check if this batch is an N-to-1 aggregate operation (Merge images -> PDF, Merge PDFs, Hash Manifest)
+    if (isAggregateBatchAction(tasks.front().mode, options)) {
+        std::uintmax_t sumInBytes = 0;
+        for (const auto& t : tasks) {
+            std::error_code ec;
+            if (std::filesystem::is_regular_file(t.inputPath, ec)) {
+                sumInBytes += std::filesystem::file_size(t.inputPath, ec);
+            }
+            if (onProgress) onProgress(t.rowId, 5, "等待汇总...");
+        }
+
+        auto itemProg = [&](std::size_t idx, int pct) {
+            if (idx < tasks.size() && onProgress) {
+                onProgress(tasks[idx].rowId, pct, "汇总处理中 " + std::to_string(pct) + "%");
+            }
+        };
+        auto cancelCb = [&]() -> bool { return isCancelled(); };
+
+        try {
+            const std::filesystem::path mergedOut =
+                omni::engines::ConversionEngine::executeAggregateTasks(tasks, options, itemProg, cancelCb);
+
+            std::error_code ec;
+            const std::uintmax_t outBytes = std::filesystem::is_regular_file(mergedOut, ec)
+                                                ? std::filesystem::file_size(mergedOut, ec)
+                                                : 0;
+            const std::string outName = pathToUtf8(mergedOut.filename());
+
+            for (std::size_t i = 0; i < tasks.size(); ++i) {
+                TaskResult res;
+                res.rowId = tasks[i].rowId;
+                res.ok = true;
+                res.outputPath = mergedOut;
+                res.outputBytes = (i == 0) ? outBytes : 0;
+                res.message = "✅ 已汇总至 " + outName + " (双击定位)";
+                if (onTaskFinished) onTaskFinished(res);
+            }
+
+            const std::uintmax_t saved = (sumInBytes > outBytes && outBytes > 0) ? (sumInBytes - outBytes) : 0;
+            if (onBatchFinished) onBatchFinished(static_cast<int>(tasks.size()), 0, saved);
+        } catch (const std::exception& ex) {
+            const std::string errStr = ex.what();
+            const bool wasCancelled = isCancelled() || errStr == "CANCELLED";
+            for (const auto& t : tasks) {
+                TaskResult res;
+                res.rowId = t.rowId;
+                res.ok = false;
+                res.cancelled = wasCancelled;
+                res.message = wasCancelled ? "⏹ 已中止" : ("❌ 失败: " + errStr);
+                if (onTaskFinished) onTaskFinished(res);
+            }
+            if (onBatchFinished) onBatchFinished(0, wasCancelled ? 0 : static_cast<int>(tasks.size()), 0);
+        }
+        return;
+    }
+
+    // Standard per-file parallel execution
     bool hasMediaProcess = false;
     for (const auto& t : tasks) {
         if (t.mode == WorkMode::Audio || t.mode == WorkMode::Video) {
@@ -40,13 +95,23 @@ void DualPoolScheduler::executeBatch(
                                   ? std::min<std::size_t>(tasks.size(), 2)
                                   : std::min<std::size_t>(tasks.size(), std::clamp<std::size_t>(hw / 2, 1, 4));
 
-    // Guard output path allocation so concurrent workers converting identically-named files
-    // into a shared custom output directory never pick the same filename.
     std::mutex pathAllocMutex;
     std::atomic<std::size_t> nextIndex{0};
     std::atomic<int> successCnt{0};
     std::atomic<int> failCnt{0};
     std::atomic<std::uintmax_t> totalSavedBytes{0};
+
+    auto buildSuffixTag = [&](WorkMode m) -> std::string {
+        if (m == WorkMode::Novel) return "_book";
+        if (m == WorkMode::Document) return "_converted";
+        if (m == WorkMode::Toolbox) {
+            if (options.toolAction == "exact_kb") return "_" + std::to_string(options.toolTargetKb) + "kb";
+            if (options.toolAction == "id_watermark") return "_watermarked";
+            if (options.toolAction == "subtitle") return "_sub";
+            return "_out";
+        }
+        return "_" + compressionToKey(options.compLevel);
+    };
 
     auto workerLoop = [&]() {
         while (true) {
@@ -76,22 +141,19 @@ void DualPoolScheduler::executeBatch(
             }
 
             const std::uintmax_t inSize = std::filesystem::file_size(task.inputPath, ec);
-            const std::string suffixTag = (task.mode != WorkMode::Novel)
-                                              ? ("_" + compressionToKey(options.compLevel))
-                                              : "_converted";
+            const bool createsFolderOnly = (task.mode == WorkMode::Document && options.docAction == "pdf_to_img");
 
-            std::filesystem::path outPath;
-            {
+            std::filesystem::path suggestedOutPath;
+            if (!createsFolderOnly) {
                 std::lock_guard<std::mutex> lk(pathAllocMutex);
-                outPath = omni::infra::PortableEnv::resolveSafeOutputPath(
-                    task.inputPath, options.outputDir, options.targetFormat, suffixTag);
-                // Touch a zero-byte reservation file if multi-worker so sibling threads see it immediately
+                suggestedOutPath = omni::infra::PortableEnv::resolveSafeOutputPath(
+                    task.inputPath, options.outputDir, options.targetFormat, buildSuffixTag(task.mode));
                 if (workerCount > 1) {
                     FILE* fp = nullptr;
 #ifdef _WIN32
-                    _wfopen_s(&fp, outPath.wstring().c_str(), L"wb");
+                    _wfopen_s(&fp, suggestedOutPath.wstring().c_str(), L"wb");
 #else
-                    fp = std::fopen(outPath.c_str(), "wb");
+                    fp = std::fopen(suggestedOutPath.c_str(), "wb");
 #endif
                     if (fp) std::fclose(fp);
                 }
@@ -109,12 +171,21 @@ void DualPoolScheduler::executeBatch(
             auto cancelCb = [&]() -> bool { return isCancelled(); };
 
             try {
-                omni::engines::ConversionEngine::executeTask(task, outPath, options, progCb, cancelCb);
+                const std::filesystem::path actualOut =
+                    omni::engines::ConversionEngine::executeTask(task, suggestedOutPath, options, progCb, cancelCb);
 
                 std::error_code outEc;
-                const std::uintmax_t outSize = std::filesystem::is_regular_file(outPath, outEc)
-                                                   ? std::filesystem::file_size(outPath, outEc)
-                                                   : 0;
+                std::uintmax_t outSize = 0;
+                if (std::filesystem::is_regular_file(actualOut, outEc)) {
+                    outSize = std::filesystem::file_size(actualOut, outEc);
+                } else if (std::filesystem::is_directory(actualOut, outEc)) {
+                    for (const auto& entry : std::filesystem::directory_iterator(actualOut, outEc)) {
+                        if (entry.is_regular_file(outEc)) {
+                            outSize += entry.file_size(outEc);
+                        }
+                    }
+                }
+
                 if (inSize > outSize && outSize > 0) {
                     totalSavedBytes.fetch_add(inSize - outSize, std::memory_order_relaxed);
                 }
@@ -123,15 +194,17 @@ void DualPoolScheduler::executeBatch(
                 TaskResult res;
                 res.rowId = task.rowId;
                 res.ok = true;
-                res.outputPath = outPath;
+                res.outputPath = actualOut;
                 res.message = "✅ 完成 (双击定位)";
                 res.inputBytes = inSize;
                 res.outputBytes = outSize;
                 if (onTaskFinished) onTaskFinished(res);
 
             } catch (const std::exception& ex) {
-                std::error_code rmEc;
-                std::filesystem::remove(outPath, rmEc);
+                if (!suggestedOutPath.empty()) {
+                    std::error_code rmEc;
+                    std::filesystem::remove(suggestedOutPath, rmEc);
+                }
 
                 const std::string errStr = ex.what();
                 if (isCancelled() || errStr == "CANCELLED") {

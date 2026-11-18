@@ -44,14 +44,17 @@ enum class WorkMode {
     Image = 0,
     Audio = 1,
     Video = 2,
-    Novel = 3
+    Novel = 3,
+    Document = 4,
+    Toolbox = 5
 };
 
 enum class CompressionLevel {
     Lossless = 0,
     Light = 1,
     Balanced = 2,
-    Extreme = 3
+    Extreme = 3,
+    Custom = 4
 };
 
 struct CompressionPresetInfo {
@@ -69,7 +72,7 @@ std::string compressionToKey(CompressionLevel level);
 CompressionLevel compressionFromKey(const std::string& key);
 
 std::optional<WorkMode> detectCategoryForFile(const std::filesystem::path& path);
-bool isFileAcceptedInMode(const std::filesystem::path& path, WorkMode mode);
+bool isFileAcceptedInMode(const std::filesystem::path& path, WorkMode mode, const std::string& subAction = "");
 std::string formatByteSize(std::uintmax_t bytes);
 
 struct ConversionOptions {
@@ -77,24 +80,63 @@ struct ConversionOptions {
     std::string targetFormat;        // Lowercase e.g. "webp", "mp3", "mp4", "epub"
     CompressionLevel compLevel = CompressionLevel::Balanced;
 
-    // Image options
-    int imgMaxDim = 0;
+    // 1. Image fine-grained options
+    int imgCustomQuality = 80;       // 1..100 (used when compLevel == Custom)
+    int imgPngColors = 256;          // 2..256 (0 = truecolor lossless, 2..256 = palette quantize)
+    int imgMaxDim = 0;               // 0 = keep, or 16..16384 px
+    int imgScalePercent = 100;       // 10..400% (applied when imgMaxDim == 0 and != 100)
+    int imgRotateDeg = 0;            // 0, 90, 180, 270
+    bool imgFlipHorizontal = false;
+    bool imgGrayscale = false;
     bool imgStripExif = false;
+    std::string imgBgColor = "#FFFFFF"; // Alpha flatten background color
+    std::string imgWatermarkText;       // Optional corner watermark text
 
-    // Audio options
-    int audSampleRate = 0;
+    // 2. Audio fine-grained options
+    int audCustomBitrateKbps = 192;  // 16..512 kbps (used when compLevel == Custom)
+    int audSampleRate = 0;           // 0 = keep, 8000, 16000, 22050, 44100, 48000, 96000
+    int audChannels = 0;             // 0 = keep, 1 = mono, 2 = stereo
+    double audSpeed = 1.0;           // 0.5..2.0x tempo
     bool audLoudnorm = false;
+    std::string mediaTrimStart;      // Optional HH:MM:SS or MM:SS
+    std::string mediaTrimEnd;        // Optional HH:MM:SS or MM:SS
 
-    // Video options
-    int vidMaxWidth = 0;
-    std::string vidCodec = "h264"; // "h264" or "h265"
+    // 3. Video fine-grained options
+    int vidCustomCrf = 24;           // 0..51 (used when compLevel == Custom)
+    int vidMaxWidth = 0;             // 0 = keep, or 120..7680 px
+    int vidFps = 0;                  // 0 = auto/keep, or 5..120 fps
+    std::string vidCodec = "h264";   // "h264" or "h265"
     bool vidMute = false;
 
-    // Novel options
+    // 4. Novel / E-Book rich customization options
     bool novAutoIndent = true;
+    int novIndentSpaces = 2;              // 0, 2, 4
+    double novFontSizePt = 11.5;          // 9.0 .. 22.0 pt
+    double novLineHeight = 1.8;           // 1.2 .. 2.5
     std::string novPdfPreset = "a4";      // "a4", "b5", "eink6"
     std::string novTxtEncoding = "utf-8"; // "utf-8", "gb18030"
-    std::string novCustomAuthor;
+    std::string novCustomTitle;           // Optional book title override
+    std::string novCustomAuthor;          // Optional author override
+    std::filesystem::path novCoverPath;   // Optional custom cover image (JPG/PNG/WEBP)
+    bool novAutoGenerateCover = false;    // Generate procedural cover when novCoverPath is empty
+    bool novCleanAds = true;              // Clean web-novel URL/ad junk lines
+    std::string novZhConvert = "none";    // "none", "t2s" (Traditional->Simplified), "s2t" (Simplified->Traditional)
+    std::string novCustomChapterRegex;    // Optional user regex for chapter splitting
+
+    // 5. Document & Data Table Workshop options
+    // docAction: "img_to_pdf", "merge_pdf", "pdf_to_img", "table_convert"
+    std::string docAction = "img_to_pdf";
+    std::string docPagePreset = "fit";    // "fit" (match image), "a4", "b5"
+    int docPdfDpi = 150;                  // 72..300 DPI for pdf_to_img
+    std::string docMergedName = "合并文档";
+
+    // 6. Everyday Life Toolbox options
+    // toolAction: "exact_kb", "id_watermark", "subtitle", "hash_manifest"
+    std::string toolAction = "exact_kb";
+    int toolTargetKb = 100;               // e.g. 20..10240 KB exact photo size cap
+    std::string toolWatermarkText = "仅供本次业务办理使用 他用无效";
+    int toolWatermarkOpacity = 28;        // 8..85%
+    int toolSubtitleShiftMs = 0;          // -600000 .. +600000 ms
 };
 
 struct TaskItem {
@@ -115,5 +157,7 @@ struct TaskResult {
 
 using ProgressCallback = std::function<void(int percent)>;
 using CancelCheckCallback = std::function<bool()>;
+
+bool isAggregateBatchAction(WorkMode mode, const ConversionOptions& options);
 
 } // namespace omni::core
