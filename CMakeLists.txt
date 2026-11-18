@@ -4,7 +4,8 @@ if(APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS deployment version")
 endif()
 
-project(OmniConvert VERSION 2.0.0 LANGUAGES CXX)
+# Enable both C and CXX so FetchContent(zlib) works on Windows MSVC / Ninja / Linux
+project(OmniConvert VERSION 2.0.0 LANGUAGES C CXX)
 
 if(APPLE)
     enable_language(OBJCXX)
@@ -35,16 +36,14 @@ if(APPLE AND TARGET WrapOpenGL::WrapOpenGL)
 endif()
 
 if(NOT ZLIB_FOUND)
-    find_package(Qt6 QUIET COMPONENTS ZlibPrivate)
-    if(NOT TARGET Qt6::ZlibPrivate)
-        include(FetchContent)
-        FetchContent_Declare(
-            zlib_fetched
-            URL https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz
-        )
-        set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-        FetchContent_MakeAvailable(zlib_fetched)
-    endif()
+    include(FetchContent)
+    FetchContent_Declare(
+        zlib_fetched
+        URL https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz
+    )
+    set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(ZLIB_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(zlib_fetched)
 endif()
 
 set(OMNI_CORE_SOURCES
@@ -88,10 +87,11 @@ target_link_libraries(omni_core PUBLIC
 
 if(ZLIB_FOUND)
     target_link_libraries(omni_core PUBLIC ZLIB::ZLIB)
-elseif(TARGET Qt6::ZlibPrivate)
-    target_link_libraries(omni_core PUBLIC Qt6::ZlibPrivate)
 elseif(TARGET zlibstatic)
     target_link_libraries(omni_core PUBLIC zlibstatic)
+    target_include_directories(omni_core PUBLIC ${zlib_fetched_SOURCE_DIR} ${zlib_fetched_BINARY_DIR})
+elseif(TARGET zlib)
+    target_link_libraries(omni_core PUBLIC zlib)
     target_include_directories(omni_core PUBLIC ${zlib_fetched_SOURCE_DIR} ${zlib_fetched_BINARY_DIR})
 endif()
 

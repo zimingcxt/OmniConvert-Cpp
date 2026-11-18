@@ -17,14 +17,17 @@ jobs:
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.3'
-          modules: 'qtimageformats qtpdf'
+          modules: 'qtimageformats'
+          aqtversion: '==3.2.1'
 
-      - name: Download Static macOS FFmpeg
+      - name: Obtain Static macOS FFmpeg via imageio-ffmpeg
         run: |
           mkdir -p bin
-          curl -fSL https://evermeet.cx/ffmpeg/getrelease/zip -o ffmpeg.zip
-          unzip -o ffmpeg.zip -d bin/
+          python3 -m pip install --upgrade pip imageio-ffmpeg
+          FF_BIN=$(python3 -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())")
+          cp -f "$FF_BIN" bin/ffmpeg
           chmod +x bin/ffmpeg
+          ls -lh bin/ffmpeg
 
       - name: Build, Test & Bundle OmniConvert.app
         run: |
@@ -49,16 +52,17 @@ jobs:
         with:
           version: '6.8.3'
           arch: 'win64_msvc2022_64'
-          modules: 'qtimageformats qtpdf'
+          modules: 'qtimageformats'
+          aqtversion: '==3.2.1'
 
-      - name: Download Static Windows FFmpeg (gyan.dev essentials)
+      - name: Obtain Static Windows FFmpeg via imageio-ffmpeg
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path bin | Out-Null
-          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile ffmpeg.zip
-          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_tmp
-          $ff = Get-ChildItem -Path ffmpeg_tmp -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
-          Copy-Item $ff.FullName "bin\ffmpeg.exe"
+          python -m pip install --upgrade pip imageio-ffmpeg
+          $ff = python -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"
+          Copy-Item -Force $ff "bin\ffmpeg.exe"
+          Get-Item "bin\ffmpeg.exe"
 
       - name: Configure, Build, Test & Package Windows Portable ZIP
         shell: pwsh
