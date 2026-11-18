@@ -107,7 +107,7 @@ int main(int argc, char* argv[]) {
             "    “此去经年，定不负韶华！”\n"
             "第二章 万剑归宗\n"
             "    山巅之上，云海翻涌，剑意纵横三万里。\n";
-        const auto gbTxtPath = root / "《测试武侠录》.txt";
+        const auto gbTxtPath = root / core::pathFromUtf8("《测试武侠录》.txt");
         infra::AtomicFileTx::writeBytesAtomic(gbTxtPath, infra::TextEncoding::encodeFromUtf8(novelTxt, "gb18030"));
 
         const auto parsed = engines::NovelEngine::parseNovelToDocument(gbTxtPath);

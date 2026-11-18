@@ -32,7 +32,7 @@ jobs:
       - name: Build, Test & Bundle OmniConvert.app
         run: |
           chmod +x scripts/build_macos.sh
-          ./scripts/build_macos.sh "${Qt6_DIR}"
+          ./scripts/build_macos.sh "${QT_ROOT_DIR}"
           ditto -c -k --sequesterRsrc --keepParent OmniConvert.app OmniConvert-macOS-Offline.zip
 
       - name: Upload macOS Offline Artifact
@@ -67,11 +67,19 @@ jobs:
       - name: Configure, Build, Test & Package Windows Portable ZIP
         shell: pwsh
         run: |
-          cmake -S . -B build/win-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$env:Qt6_DIR"
-          cmake --build build/win-release --config Release --parallel
+          $ErrorActionPreference = "Stop"
+          $QtRoot = if ($env:QT_ROOT_DIR) { $env:QT_ROOT_DIR } else { $env:Qt6_DIR }
+          Write-Host "Using Qt6 Root at: $QtRoot"
 
-          $env:PATH = "$env:Qt6_DIR\bin;$env:PATH"
+          cmake -S . -B build/win-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$QtRoot"
+          if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
+
+          cmake --build build/win-release --config Release --parallel
+          if ($LASTEXITCODE -ne 0) { throw "CMake build failed" }
+
+          $env:PATH = "$QtRoot\bin;$env:PATH"
           ctest --test-dir build/win-release -C Release --output-on-failure
+          if ($LASTEXITCODE -ne 0) { throw "CTest suite failed" }
 
           New-Item -ItemType Directory -Force -Path dist/OmniConvert-Win64/bin | Out-Null
           $ExePath = Join-Path "build/win-release" "Release/OmniConvert.exe"
@@ -81,7 +89,9 @@ jobs:
           Copy-Item -Force $ExePath "dist/OmniConvert-Win64/OmniConvert.exe"
           Copy-Item -Force "bin/ffmpeg.exe" "dist/OmniConvert-Win64/bin/ffmpeg.exe"
 
-          & "$env:Qt6_DIR/bin/windeployqt.exe" --release --no-translations --compiler-runtime "dist/OmniConvert-Win64/OmniConvert.exe"
+          & "$QtRoot/bin/windeployqt.exe" --release --no-translations --compiler-runtime "dist/OmniConvert-Win64/OmniConvert.exe"
+          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
+
           Compress-Archive -Path "dist/OmniConvert-Win64/*" -DestinationPath OmniConvert-Windows-x64-Offline.zip
 
       - name: Upload Windows Offline Artifact
