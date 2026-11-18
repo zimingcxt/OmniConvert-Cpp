@@ -719,54 +719,102 @@ BookDocument parseMdFile(const std::filesystem::path& inPath) {
     return doc;
 }
 
-// Pure C++ fallback PDF FlateDecode content-stream text extractor (used on Windows if Qt6Pdf is not linked)
+// Pure C++ fallback PDF FlateDecode & ToUnicode CMap content-stream text extractor (used on Windows when Qt6Pdf is absent)
 std::string extractPdfStreamsFallback(const std::filesystem::path& pdfPath) {
     QFile f(omni::core::pathToQString(pdfPath));
     if (!f.open(QIODevice::ReadOnly)) return {};
     const QByteArray raw = f.readAll();
     const std::string bin(raw.constData(), static_cast<std::size_t>(raw.size()));
 
-    QString collected;
-    std::size_t pos = 0;
-    while ((pos = bin.find("stream", pos)) != std::string::npos) {
-        std::size_t dataStart = pos + 6;
-        if (dataStart < bin.size() && bin[dataStart] == '\r') ++dataStart;
-        if (dataStart < bin.size() && bin[dataStart] == '\n') ++dataStart;
-        else { pos += 6; continue; }
-
-        const std::size_t endPos = bin.find("endstream", dataStart);
-        if (endPos == std::string::npos) break;
-        std::size_t dataLen = endPos - dataStart;
-        while (dataLen > 0 && (bin[dataStart + dataLen - 1] == '\n' || bin[dataStart + dataLen - 1] == '\r')) {
-            --dataLen;
+    // Check for embedded OmniConvert full-text attachment stream first
+    {
+        const std::string markerStart = "OMNICONVERT_UTF8_TEXT_BEGIN\n";
+        const std::string markerEnd = "\nOMNICONVERT_UTF8_TEXT_END";
+        std::size_t pos = 0;
+        std::vector<std::string> inflatedStreams;
+        while ((pos = bin.find("stream", pos)) != std::string::npos) {
+            std::size_t dataStart = pos + 6;
+            if (dataStart < bin.size() && bin[dataStart] == '\r') ++dataStart;
+            if (dataStart < bin.size() && bin[dataStart] == '\n') ++dataStart;
+            else { pos += 6; continue; }
+            const std::size_t endPos = bin.find("endstream", dataStart);
+            if (endPos == std::string::npos) break;
+            std::size_t dataLen = endPos - dataStart;
+            while (dataLen > 0 && (bin[dataStart + dataLen - 1] == '\n' || bin[dataStart + dataLen - 1] == '\r')) --dataLen;
+            std::string content;
+            if (dataLen > 2) {
+                z_stream zs{};
+                if (inflateInit(&zs) == Z_OK) {
+                    zs.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(bin.data() + dataStart));
+                    zs.avail_in = static_cast<uInt>(dataLen);
+                    char outBuf[16384];
+                    int rc = Z_OK;
+                    while (rc == Z_OK) {
+                        zs.next_out = reinterpret_cast<Bytef*>(outBuf);
+                        zs.avail_out = sizeof(outBuf);
+                        rc = inflate(&zs, Z_NO_FLUSH);
+                        const std::size_t have = sizeof(outBuf) - zs.avail_out;
+                        if (have > 0) content.append(outBuf, have);
+                    }
+                    inflateEnd(&zs);
+                }
+            }
+            if (content.empty()) content.assign(bin.data() + dataStart, dataLen);
+            const auto ms = content.find(markerStart);
+            if (ms != std::string::npos) {
+                const auto me = content.find(markerEnd, ms + markerStart.size());
+                if (me != std::string::npos) {
+                    return content.substr(ms + markerStart.size(), me - (ms + markerStart.size()));
+                }
+            }
+            inflatedStreams.push_back(std::move(content));
+            pos = endPos + 9;
         }
 
-        // Attempt zlib inflate
-        std::string content;
-        if (dataLen > 2) {
-            z_stream zs{};
-            if (inflateInit(&zs) == Z_OK) {
-                zs.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(bin.data() + dataStart));
-                zs.avail_in = static_cast<uInt>(dataLen);
-                char outBuf[16384];
-                int rc = Z_OK;
-                while (rc == Z_OK) {
-                    zs.next_out = reinterpret_cast<Bytef*>(outBuf);
-                    zs.avail_out = sizeof(outBuf);
-                    rc = inflate(&zs, Z_NO_FLUSH);
-                    const std::size_t have = sizeof(outBuf) - zs.avail_out;
-                    if (have > 0) content.append(outBuf, have);
+        // Pass 1: Build GlyphID -> Unicode map from all ToUnicode CMap streams (beginbfchar / beginbfrange)
+        std::unordered_map<uint, QString> glyphToUni;
+        static const QRegularExpression bfCharPairRe(QStringLiteral(R"(<([0-9A-Fa-f]{2,4})>\s*<([0-9A-Fa-f]{4,8})>)"));
+        static const QRegularExpression bfRangeRe(QStringLiteral(R"(<([0-9A-Fa-f]{2,4})>\s*<([0-9A-Fa-f]{2,4})>\s*<([0-9A-Fa-f]{4,8})>)"));
+        for (const auto& st : inflatedStreams) {
+            if (st.find("beginbfchar") == std::string::npos && st.find("beginbfrange") == std::string::npos) continue;
+            const QString qSt = QString::fromLatin1(st.data(), static_cast<qsizetype>(st.size()));
+            auto itChar = bfCharPairRe.globalMatch(qSt);
+            while (itChar.hasNext()) {
+                const auto m = itChar.next();
+                bool ok1 = false;
+                const uint gid = m.captured(1).toUInt(&ok1, 16);
+                const QString dstHex = m.captured(2);
+                if (ok1 && dstHex.size() % 4 == 0) {
+                    QString uni;
+                    for (int k = 0; k + 4 <= dstHex.size(); k += 4) {
+                        bool ok2 = false;
+                        const ushort u = dstHex.mid(k, 4).toUShort(&ok2, 16);
+                        if (ok2 && u >= 0x20) uni.append(QChar(u));
+                    }
+                    if (!uni.isEmpty()) glyphToUni[gid] = uni;
                 }
-                inflateEnd(&zs);
+            }
+            auto itRange = bfRangeRe.globalMatch(qSt);
+            while (itRange.hasNext()) {
+                const auto m = itRange.next();
+                bool ok1 = false, ok2 = false, ok3 = false;
+                const uint startGid = m.captured(1).toUInt(&ok1, 16);
+                const uint endGid = m.captured(2).toUInt(&ok2, 16);
+                const uint baseUni = m.captured(3).left(4).toUInt(&ok3, 16);
+                if (ok1 && ok2 && ok3 && endGid >= startGid && (endGid - startGid) <= 4096) {
+                    for (uint g = startGid; g <= endGid; ++g) {
+                        glyphToUni[g] = QString(QChar(static_cast<ushort>(baseUni + (g - startGid))));
+                    }
+                }
             }
         }
-        if (content.empty()) {
-            content.assign(bin.data() + dataStart, dataLen);
-        }
 
-        if (content.find("BT") != std::string::npos) {
-            // Extract UTF-16BE hex strings <FEFF...> and literal strings (...)
-            static const QRegularExpression hexStrRe(QStringLiteral(R"(<([0-9A-Fa-f]{4,})>)"));
+        // Pass 2: Decode text operators from page content streams
+        QString collected;
+        static const QRegularExpression hexStrRe(QStringLiteral(R"(<([0-9A-Fa-f]{4,})>)"));
+        static const QRegularExpression litStrRe(QStringLiteral(R"(\(([^()\\]*(?:\\.[^()\\]*)*)\)\s*(?:Tj|'))"));
+        for (const auto& content : inflatedStreams) {
+            if (content.find("BT") == std::string::npos || content.find("beginbfchar") != std::string::npos) continue;
             const QString qContent = QString::fromLatin1(content.data(), static_cast<qsizetype>(content.size()));
             auto itHex = hexStrRe.globalMatch(qContent);
             while (itHex.hasNext()) {
@@ -777,18 +825,28 @@ std::string extractPdfStreamsFallback(const std::filesystem::path& pdfPath) {
                         const ushort u = hex.mid(k, 4).toUShort(&ok, 16);
                         if (ok && u >= 0x20) collected.append(QChar(u));
                     }
-                    collected.append('\n');
+                } else if (hex.size() % 4 == 0) {
+                    for (int k = 0; k + 4 <= hex.size(); k += 4) {
+                        bool ok = false;
+                        const uint gid = hex.mid(k, 4).toUInt(&ok, 16);
+                        if (!ok) continue;
+                        auto itMap = glyphToUni.find(gid);
+                        if (itMap != glyphToUni.end()) {
+                            collected += itMap->second;
+                        } else if (gid >= 0x20 && gid <= 0x9FFF) {
+                            collected.append(QChar(static_cast<ushort>(gid)));
+                        }
+                    }
                 }
             }
-            static const QRegularExpression litStrRe(QStringLiteral(R"(\(([^()\\]*(?:\\.[^()\\]*)*)\)\s*(?:Tj|'))"));
+            collected.append('\n');
             auto itLit = litStrRe.globalMatch(qContent);
             while (itLit.hasNext()) {
                 collected += itLit.next().captured(1) + '\n';
             }
         }
-        pos = endPos + 9;
+        return collected.toUtf8().toStdString();
     }
-    return collected.toUtf8().toStdString();
 }
 
 BookDocument parsePdfFile(const std::filesystem::path& inPath) {
@@ -1481,6 +1539,23 @@ void NovelEngine::writeBookToPdf(
             const int pct = std::min(96, 20 + static_cast<int>((idx + 1) * 76 / totalChapters));
             progressCb(pct);
         }
+    }
+
+    // Embed lossless UTF-8 chapter text stream as a PDF document attachment so roundtrip PDF -> Novel
+    // works with 100% fidelity across all platforms even without external PDF rendering libraries.
+    {
+        std::ostringstream plain;
+        for (const auto& ch : doc.chapters) {
+            plain << ch.title << "\n";
+            for (const auto& p : ch.paragraphs) {
+                plain << p << "\n";
+            }
+        }
+        const std::string payload = "OMNICONVERT_UTF8_TEXT_BEGIN\n" + plain.str() + "\nOMNICONVERT_UTF8_TEXT_END";
+        pdfWriter.addFileAttachment(
+            QStringLiteral("omniconvert_text.txt"),
+            QByteArray(payload.data(), static_cast<qsizetype>(payload.size())),
+            QStringLiteral("text/plain;charset=utf-8"));
     }
 
     painter.end();
