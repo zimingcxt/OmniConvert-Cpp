@@ -5,6 +5,14 @@ on:
     branches: [ main, master ]
     tags: [ 'v*' ]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: '可选：填写发布版本号（例如 v2.0.0）将直接创建 GitHub Release'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
 
 jobs:
   build-macos:
@@ -99,3 +107,25 @@ jobs:
         with:
           name: OmniConvert-Windows-x64-Offline
           path: OmniConvert-Windows-x64-Offline.zip
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [ build-macos, build-windows ]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Built Packages
+        uses: actions/download-artifact@v4
+        with:
+          path: release_assets
+          merge-multiple: true
+
+      - name: Create GitHub Release & Upload ZIPs
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+          name: OmniConvert ${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }} (macOS & Windows 离线便携版)
+          generate_release_notes: true
+          files: |
+            release_assets/OmniConvert-macOS-Offline.zip
+            release_assets/OmniConvert-Windows-x64-Offline.zip
