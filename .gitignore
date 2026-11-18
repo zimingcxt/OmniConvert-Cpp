@@ -1,0 +1,15 @@
+# 编译产物与临时构建目录
+build/
+dist/
+*.app/
+omni_settings.json
+
+# 离线二进制依赖（由 GitHub Actions 或本地构建脚本自动拉取与嵌入）
+bin/
+
+# 编辑器与系统缓存
+.DS_Store
+*.user
+.vscode/
+.idea/
+*.log

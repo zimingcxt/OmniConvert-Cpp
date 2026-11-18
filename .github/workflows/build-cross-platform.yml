@@ -1,0 +1,85 @@
+name: Build Cross-Platform Offline Releases (macOS & Windows)
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    name: macOS Universal/ARM64 Offline Bundle
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt6 & Static FFmpeg
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.7.3'
+          modules: 'qtimageformats qtpdf'
+
+      - name: Download Static macOS FFmpeg
+        run: |
+          mkdir -p bin
+          curl -L https://evermeet.cx/ffmpeg/getrelease/zip -o ffmpeg.zip
+          unzip -o ffmpeg.zip -d bin/
+          chmod +x bin/ffmpeg
+
+      - name: Build, Test & Bundle OmniConvert.app
+        run: |
+          chmod +x scripts/build_macos.sh
+          ./scripts/build_macos.sh "${Qt6_DIR}"
+          ditto -c -k --sequesterRsrc --keepParent OmniConvert.app OmniConvert-macOS-Offline.zip
+
+      - name: Upload macOS Offline Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OmniConvert-macOS-Offline
+          path: OmniConvert-macOS-Offline.zip
+
+  build-windows:
+    name: Windows x64 Offline Portable Package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ZLIB via vcpkg
+        run: |
+          vcpkg install zlib:x64-windows
+
+      - name: Install Qt6 (MSVC x64)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.7.3'
+          arch: 'win64_msvc2022_64'
+          modules: 'qtimageformats qtpdf'
+
+      - name: Download Static Windows FFmpeg (gyan.dev essentials)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path bin | Out-Null
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile ffmpeg.zip
+          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg_tmp
+          $ff = Get-ChildItem -Path ffmpeg_tmp -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
+          Copy-Item $ff.FullName "bin\ffmpeg.exe"
+
+      - name: Configure, Build & Package Windows Portable ZIP
+        shell: pwsh
+        run: |
+          cmake -S . -B build/win-release -DCMAKE_BUILD_TYPE=Release `
+                -DCMAKE_PREFIX_PATH="$env:Qt6_DIR" `
+                -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          cmake --build build/win-release --config Release --parallel
+          ctest --test-dir build/win-release -C Release --output-on-failure
+          New-Item -ItemType Directory -Force -Path dist/OmniConvert-Win64/bin | Out-Null
+          Copy-Item build/win-release/Release/OmniConvert.exe dist/OmniConvert-Win64/OmniConvert.exe
+          Copy-Item bin/ffmpeg.exe dist/OmniConvert-Win64/bin/ffmpeg.exe
+          & "$env:Qt6_DIR/bin/windeployqt.exe" --release --no-translations --compiler-runtime dist/OmniConvert-Win64/OmniConvert.exe
+          Compress-Archive -Path "dist/OmniConvert-Win64/*" -DestinationPath OmniConvert-Windows-x64-Offline.zip
+
+      - name: Upload Windows Offline Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OmniConvert-Windows-x64-Offline
+          path: OmniConvert-Windows-x64-Offline.zip

@@ -1,0 +1,8 @@
+{
+  "name": "omniconvert-cpp",
+  "version-string": "2.0.0",
+  "description": "Offline portable cross-platform media, image, and e-book workshop built with C++20 and Qt6",
+  "dependencies": [
+    "zlib"
+  ]
+}
